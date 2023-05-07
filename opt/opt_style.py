@@ -399,12 +399,18 @@ group.add_argument(
     help="do not start with sphere bounds (please do not use for 360)",
 )
 
+## new args
+group.add_argument("--use_clip_loss", action="store_true", help="add clip loss besides NNFM")
+group.add_argument("--clip_weight", type=float, default=0.1, help="Clip loss weight")
+group.add_argument("--neg_style", type=str, help="path to negative style image used in modified NNFM")
+
 args = parser.parse_args()
 config_util.maybe_merge_config_file(args)
 
 assert args.lr_sigma_final <= args.lr_sigma, "lr_sigma must be >= lr_sigma_final"
 assert args.lr_sh_final <= args.lr_sh, "lr_sh must be >= lr_sh_final"
 assert args.lr_basis_final <= args.lr_basis, "lr_basis must be >= lr_basis_final"
+print(args)
 
 os.makedirs(args.train_dir, exist_ok=True)
 summary_writer = SummaryWriter(args.train_dir)
@@ -438,6 +444,7 @@ if args.background_nlayers > 0 and not dset.should_use_background:
 
 assert os.path.isfile(args.init_ckpt), "must specify a initial checkpoint"
 grid = svox2.SparseGrid.load(args.init_ckpt, device=device, reset_basis_dim=args.reset_basis_dim)
+grid_orig = svox2.SparseGrid.load(args.init_ckpt, device=device, reset_basis_dim=args.reset_basis_dim)
 ic("Loaded ckpt: ", args.init_ckpt)
 ic(grid.basis_dim)
 
@@ -505,32 +512,52 @@ if args.enable_random:
 
 
 ###### resize style image such that its long side matches the long side of content images
-style_img = imageio.imread(args.style).astype(np.float32) / 255.0
-style_h, style_w = style_img.shape[:2]
 content_long_side = max([dset.w, dset.h])
-if style_h > style_w:
+def load_and_save_style_img(style_path, save_name):
+    style_img = imageio.imread(style_path).astype(np.float32) / 255.0
+    style_h, style_w = style_img.shape[:2]
+    if style_h > style_w:
+        style_img = cv2.resize(
+            style_img,
+            (int(content_long_side / style_h * style_w), content_long_side),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        style_img = cv2.resize(
+            style_img,
+            (content_long_side, int(content_long_side / style_w * style_h)),
+            interpolation=cv2.INTER_AREA,
+        )
     style_img = cv2.resize(
         style_img,
-        (int(content_long_side / style_h * style_w), content_long_side),
+        (style_img.shape[1] // 2, style_img.shape[0] // 2),
         interpolation=cv2.INTER_AREA,
     )
-else:
-    style_img = cv2.resize(
-        style_img,
-        (content_long_side, int(content_long_side / style_w * style_h)),
-        interpolation=cv2.INTER_AREA,
+    imageio.imwrite(
+        os.path.join(args.train_dir, f"{save_name}_image.png"),
+        np.clip(style_img * 255.0, 0.0, 255.0).astype(np.uint8),
     )
-style_img = cv2.resize(
-    style_img,
-    (style_img.shape[1] // 2, style_img.shape[0] // 2),
-    interpolation=cv2.INTER_AREA,
-)
-imageio.imwrite(
-    os.path.join(args.train_dir, "style_image.png"),
-    np.clip(style_img * 255.0, 0.0, 255.0).astype(np.uint8),
-)
+    return style_img
+style_img = load_and_save_style_img(args.style, "style")
 style_img = torch.from_numpy(style_img).to(device=device)
 ic("Style image: ", args.style, style_img.shape)
+
+# neg_style_imgs = []
+neg_style_img_candidates = []
+if args.neg_style:
+    neg_styles = args.neg_style.split(",")
+    for i, neg_style_path in enumerate(neg_styles):
+        neg_style_img = load_and_save_style_img(neg_style_path, f"neg_style_{i}")
+        neg_style_img = cv2.resize(neg_style_img, (content_long_side // 4, content_long_side // 4),  # reduce size by half again
+                        interpolation=cv2.INTER_LANCZOS4)
+        
+        ## negative style image augmentation with flipping and rotation
+        for neg_style_img_base in [neg_style_img, neg_style_img[::-1]]:
+            for num_rot in range(3):
+                neg_style_img_candidates.append(np.rot90(neg_style_img_base, k=num_rot, axes=(0,1)))
+neg_style_img = np.concatenate(neg_style_img_candidates, axis=0) # concat along height dim
+neg_style_img = torch.from_numpy(neg_style_img).to(device=device)
+ic("neg_style image: ", neg_styles, neg_style_img.shape)
 
 
 global_start_time = datetime.now()
@@ -601,16 +628,21 @@ while True:
                             ndc_coeffs=dset.ndc_coeffs,
                         )
                         rgb_pred = grid.volume_render_image(cam, use_kernel=True)
+                        rgb_pred_orig = grid_orig.volume_render_image(cam, use_kernel=True)
                         rgb_gt = dset.rays.gt.view(num_views, view_height, view_width, 3)[img_id].to(
                             device
                         )
                         rgb_gt = rgb_gt.permute(2, 0, 1).unsqueeze(0).contiguous()
                         rgb_pred = rgb_pred.permute(2, 0, 1).unsqueeze(0).contiguous()
+                        rgb_pred_orig = rgb_pred_orig.permute(2, 0, 1).unsqueeze(0).contiguous()
 
                     rgb_pred.requires_grad_(True)
                     w_variance = torch.mean(torch.pow(rgb_pred[:, :, :, :-1] - rgb_pred[:, :, :, 1:], 2))
                     h_variance = torch.mean(torch.pow(rgb_pred[:, :, :-1, :] - rgb_pred[:, :, 1:, :], 2))
                     img_tv_loss = args.img_tv_weight * (h_variance + w_variance) / 2.0
+                    loss_names=["nnfm_loss", "content_loss"]
+                    if args.use_clip_loss:
+                        loss_names.append("clip_loss")
                     loss_dict = nnfm_loss_fn(
                         F.interpolate(
                             rgb_pred,
@@ -622,18 +654,29 @@ while True:
                         blocks=[
                             args.vgg_block,
                         ],
-                        loss_names=["nnfm_loss", "content_loss"],
+                        loss_names=loss_names,
                         contents=F.interpolate(
                             rgb_gt,
                             size=None,
                             scale_factor=0.5,
                             mode="bilinear",
                         ),
+                        outputs_orig=F.interpolate(
+                            rgb_pred_orig,
+                            size=None,
+                            scale_factor=0.5,
+                            mode="bilinear",
+                        ),
+                        clip_weight=args.clip_weight,
+                        neg_style_img=neg_style_img.permute(2, 0, 1).unsqueeze(0),
                     )
-                    loss_dict["content_loss"] *= args.content_weight
+                    # args.content_weight = 0.000
+                    loss_dict["content_loss"] *= args.content_weight 
+                    # print("CWEIGHT", args.content_weight)
                     loss_dict["img_tv_loss"] = img_tv_loss
                     loss = sum(list(loss_dict.values()))
                     loss.backward()
+                    
                     rgb_pred_grad = rgb_pred.grad.squeeze(0).permute(1, 2, 0).contiguous().clone().detach().view(-1, 3)
                     return rgb_pred_grad, loss_dict
 
@@ -654,6 +697,7 @@ while True:
                 rgb_pred = torch.cat(rgb_pred, dim=0).reshape(view_height, view_width, 3)
 
                 # Stats
+                
                 for x in loss_dict:
                     stats[x] = loss_dict[x].item()
 
@@ -661,7 +705,7 @@ while True:
                 log_str = ""
                 for stat_name in stats:
                     summary_writer.add_scalar(stat_name, stats[stat_name], global_step=gstep_id)
-                    log_str += "{:.4f} ".format(stats[stat_name])
+                    log_str += "{}:{:.4f} ".format(stat_name,stats[stat_name])
                 pbar.set_description(f"{gstep_id} {log_str}")
 
                 summary_writer.add_scalar("lr_sh", lr_sh, global_step=gstep_id)
@@ -721,7 +765,9 @@ while True:
                 loss_tv_basis.backward()
 
             # Manual SGD/rmsprop step
-            # ic(lr_sigma)
+            # ic(lr_sigma)'
+            # print('LR SIGMA', lr_sigma)
+            # lr_sigma = 0.1
             if lr_sigma > 0.0:
                 grid.optim_density_step(lr_sigma, beta=args.rms_beta, optim=args.sigma_optim)
             grid.optim_sh_step(lr_sh, beta=args.rms_beta, optim=args.sh_optim)

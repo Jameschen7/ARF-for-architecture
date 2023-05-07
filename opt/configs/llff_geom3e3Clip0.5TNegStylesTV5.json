@@ -1,0 +1,20 @@
+{
+    "reso": "[[256, 256, 128], [512, 512, 128], [1408, 1156, 128]]",
+    "upsamp_every": 38400,
+    "lr_sigma": 3e3,
+    "lr_sigma_final": 3e1,
+    "use_clip_loss": true,
+    "clip_weight": 0.5,
+    "img_tv_weight": 5,
+    "neg_style": "/mnt/data_disk/ARF-svox2/data/neg_styles/wood_chair_large.jpg,/mnt/data_disk/ARF-svox2/data/neg_styles/wood_chair_large2.jpg,/mnt/data_disk/ARF-svox2/data/neg_styles/wood_base.jpg",
+    "lr_sh": 1e-1,
+    "lr_sh_final": 1e-2,
+    "thresh_type": "sigma",
+    "density_thresh": 5,
+    "lambda_tv": 0,
+    "lambda_tv_sh": 5e-3,
+    "lambda_sparsity": 0,
+    "background_brightness": 0.5,
+    "last_sample_opaque": false,
+    "tv_early_only": 0
+}

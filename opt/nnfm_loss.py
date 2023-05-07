@@ -1,7 +1,8 @@
 import torch
 import torchvision
 from icecream import ic
-
+import clip_loss
+import clip
 
 def match_colors_for_image_set(image_set, style_img):
     """
@@ -39,49 +40,75 @@ def match_colors_for_image_set(image_set, style_img):
     return image_set, color_tf
 
 
-def argmin_cos_distance(a, b, center=False):
+def argmin_cos_distance(a, b, center=False, neg_s_flat=None):
     """
     a: [b, c, hw],
     b: [b, c, h2w2]
+
+    neg_s_flat: [b,c,h3w3] for neg NNFM
     """
     if center:
         a = a - a.mean(2, keepdims=True)
         b = b - b.mean(2, keepdims=True)
+        if neg_s_flat is not None:
+            neg_s_flat = neg_s_flat - neg_s_flat.mean(2, keepdims=True)
 
-    b_norm = ((b * b).sum(1, keepdims=True) + 1e-8).sqrt()
+    a_norm = ((a * a).sum(1, keepdims=True) + 1e-8).sqrt()  # global normalize across channel
+    a = a / (a_norm + 1e-8)
+    b_norm = ((b * b).sum(1, keepdims=True) + 1e-8).sqrt() # global normalize across channel
     b = b / (b_norm + 1e-8)
+    if neg_s_flat is not None:
+        neg_s_norm = ((neg_s_flat * neg_s_flat).sum(1, keepdims=True) + 1e-8).sqrt() # global normalize across channel
+        neg_s_flat = neg_s_flat / (neg_s_norm + 1e-8)
+        b = torch.cat([b, neg_s_flat], dim=-1)  # [b, c, h2w2 + h3w3]
 
     z_best = []
+    # loop_batch_size = int(1e8 / b.shape[-1])
     loop_batch_size = int(1e8 / b.shape[-1])
-    for i in range(0, a.shape[-1], loop_batch_size):
+    for i in range(0, a.shape[-1], loop_batch_size): # over some dimension of generated image spatial dim
         a_batch = a[..., i : i + loop_batch_size]
-        a_batch_norm = ((a_batch * a_batch).sum(1, keepdims=True) + 1e-8).sqrt()
-        a_batch = a_batch / (a_batch_norm + 1e-8)
+        # a_batch_norm = ((a_batch * a_batch).sum(1, keepdims=True) + 1e-8).sqrt()  # local normalize across channel
+        # a_batch = a_batch / (a_batch_norm + 1e-8)
 
-        d_mat = 1.0 - torch.matmul(a_batch.transpose(2, 1), b)
+        d_mat = 1.0 - torch.matmul(a_batch.transpose(2, 1), b) # [1, loop_batch_size, h2w2]
 
         z_best_batch = torch.argmin(d_mat, 2)
         z_best.append(z_best_batch)
-    z_best = torch.cat(z_best, dim=-1)
+    z_best = torch.cat(z_best, dim=-1) # [1, hw]
 
     return z_best
 
 
-def nn_feat_replace(a, b):
+def nn_feat_replace(a, b, neg_s_feats=None):
+    """
+    return feature from generated image a, with NN feature replaced by 
+    features from b(style)
+    """
     n, c, h, w = a.size()
     n2, c, h2, w2 = b.size()
+    # n3, c, h3, w3 = neg_s_feats.size()
 
     assert (n == 1) and (n2 == 1)
 
     a_flat = a.view(n, c, -1)
     b_flat = b.view(n2, c, -1)
-    b_ref = b_flat.clone()
+    b_ref = b_flat.clone() # [n2, c, h2w2]
+    if neg_s_feats is not None:
+        n3, c, h3, w3 = neg_s_feats.size()
+        neg_s_flat = neg_s_feats.view(n3, c, -1)
+        neg_s_ref = neg_s_flat.clone()
+        merged_ref = torch.cat([b_ref, neg_s_ref], dim=-1)  # [1, c, h2w2 + h3w3]
 
     z_new = []
     for i in range(n):
-        z_best = argmin_cos_distance(a_flat[i : i + 1], b_flat[i : i + 1])
-        z_best = z_best.unsqueeze(1).repeat(1, c, 1)
-        feat = torch.gather(b_ref, 2, z_best)
+        if neg_s_feats is None:
+            z_best = argmin_cos_distance(a_flat[i : i + 1], b_flat[i : i + 1]) # [1, hw]
+            z_best = z_best.unsqueeze(1).repeat(1, c, 1) # [1, C, hw]
+            feat = torch.gather(b_ref, 2, z_best)  # [1, C, hw]
+        else:
+            z_best = argmin_cos_distance(a_flat[i : i + 1], b_flat[i : i + 1], neg_s_flat=neg_s_flat[i:i+1]) # [1, hw]
+            z_best = z_best.unsqueeze(1).repeat(1, c, 1) # [1, C, hw]
+            feat = torch.gather(merged_ref, 2, z_best)  # [1, C, hw]
         z_new.append(feat)
 
     z_new = torch.cat(z_new, 0)
@@ -118,6 +145,78 @@ class NNFMLoss(torch.nn.Module):
 
         self.vgg = torchvision.models.vgg16(pretrained=True).eval().to(device)
         self.normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        self.clip_loss = clip_loss.CLIPLoss()
+        descrip = "gothic cathedral with many spires" # "japanese traditional wooden architecture in kyoto" #
+        descrip_orig = "fortress on a wooden platform"
+        descrip_neg = [
+                # "gothic cathedral made of stone with tower",
+                "european church style architecture",
+                "brutalism blocky building",
+                "Neoclassical Architecture",
+                "Art Deco Architecture",
+                "Postmodern Architecture",
+                "Brutalist Architecture",
+                "Modernist Architecture",
+                "Colonial Architecture",
+                "Tudor Architecture",
+                "Greek Revival Architecture",
+                "Victorian Architecture",
+                "Bauhaus Architecture",
+                "International Style Architecture",
+                "Prairie School Architecture",
+                "Beaux-Arts Architecture",
+                "Streamline Moderne Architecture",
+                "Organic Architecture",
+                "renaissance architecture",
+                ]
+        
+        # descrip_neg = [
+        #         "gothic cathedral made of stone with tower",
+        #         "european church style architecture",
+        #         "Japanese shindo shrine",
+        #         "The Forbidden Palace",
+        #         "Neoclassical Architecture",
+        #         "Art Deco Architecture",
+        #         "Postmodern Architecture",
+        #         "Brutalist Architecture",
+        #         "Modernist Architecture",
+        #         "Colonial Architecture",
+        #         "Tudor Architecture",
+        #         "Greek Revival Architecture",
+        #         "Budda Temple",
+        #         "Victorian Architecture",
+        #         "Bauhaus Architecture",
+        #         "International Style Architecture",
+        #         "Prairie School Architecture",
+        #         "Beaux-Arts Architecture",
+        #         "Streamline Moderne Architecture",
+        #         "Organic Architecture"]
+        # descrip_neg = [
+        #         "Communist style building",
+        #         "downtown condos",
+        #         "Japanese shindo shrine",
+        #         "The Forbidden Palace",
+        #         "Neoclassical Architecture",
+        #         "Art Deco Architecture",
+        #         "Postmodern Architecture",
+        #         "Brutalist Architecture",
+        #         "Modernist Architecture",
+        #         "Colonial Architecture",
+        #         "Tudor Architecture",
+        #         "Greek Revival Architecture",
+        #         "Budda Temple",
+        #         "Victorian Architecture",
+        #         "Bauhaus Architecture",
+        #         "International Style Architecture",
+        #         "Prairie School Architecture",
+        #         "Beaux-Arts Architecture",
+        #         "Streamline Moderne Architecture",
+        #         "Deconstructivist Architecture",
+        #         "Organic Architecture"]
+
+        self.text_inputs = torch.cat([clip.tokenize(descrip)]).to(device)
+        self.text_inputs_orig = torch.cat([clip.tokenize(descrip_orig)]).to(device)
+        self.text_inputs_neg = torch.cat([clip.tokenize(descrip_neg)]).to(device)
 
     def get_feats(self, x, layers=[]):
         x = self.normalize(x)
@@ -137,15 +236,16 @@ class NNFMLoss(torch.nn.Module):
     def forward(
         self,
         outputs,
-        styles,
-        blocks=[
-            2,
-        ],
+        styles, # [1, C, H, W]
+        blocks=[2,],
         loss_names=["nnfm_loss"],  # can also include 'gram_loss', 'content_loss'
-        contents=None,
+        contents=None,  
+        outputs_orig=None,  # for Clip loss
+        clip_weight=None,   # for Clip loss
+        neg_style_img=None,      # for Clip loss
     ):
         for x in loss_names:
-            assert x in ['nnfm_loss', 'content_loss', 'gram_loss']
+            assert x in ['nnfm_loss', 'content_loss', 'gram_loss', 'clip_loss']
 
         block_indexes = [[1, 3], [6, 8], [11, 13, 15], [18, 20, 22], [25, 27, 29]]
 
@@ -159,6 +259,9 @@ class NNFMLoss(torch.nn.Module):
             s_feats_all = self.get_feats(styles, all_layers)
             if "content_loss" in loss_names:
                 content_feats_all = self.get_feats(contents, all_layers)
+            # for neg NNFM
+            if neg_style_img is not None:
+                neg_s_feats_all = self.get_feats(neg_style_img, all_layers)
 
         ix_map = {}
         for a, b in enumerate(all_layers):
@@ -170,10 +273,12 @@ class NNFMLoss(torch.nn.Module):
             layers = block_indexes[block]
             x_feats = torch.cat([x_feats_all[ix_map[ix]] for ix in layers], 1)
             s_feats = torch.cat([s_feats_all[ix_map[ix]] for ix in layers], 1)
+            neg_s_feats = torch.cat([neg_s_feats_all[ix_map[ix]] for ix in layers], 1) \
+                if neg_style_img is not None else None
 
             if "nnfm_loss" in loss_names:
-                target_feats = nn_feat_replace(x_feats, s_feats)
-                loss_dict["nnfm_loss"] += cos_loss(x_feats, target_feats)
+                target_feats = nn_feat_replace(x_feats, s_feats, neg_s_feats=neg_s_feats)
+                loss_dict["nnfm_loss"] += cos_loss(x_feats, target_feats) 
 
             if "gram_loss" in loss_names:
                 loss_dict["gram_loss"] += torch.mean((gram_matrix(x_feats) - gram_matrix(s_feats)) ** 2)
@@ -181,7 +286,11 @@ class NNFMLoss(torch.nn.Module):
             if "content_loss" in loss_names:
                 content_feats = torch.cat([content_feats_all[ix_map[ix]] for ix in layers], 1)
                 loss_dict["content_loss"] += torch.mean((content_feats - x_feats) ** 2)
-
+                
+        if "clip_loss" in loss_names:
+            closs =  self.clip_loss(outputs, self.text_inputs, outputs_orig, self.text_inputs_orig, self.text_inputs_neg, clip_weight)
+            # print('class',closs)
+            loss_dict["clip_loss"] +=  closs#torch.mean(closs)
         return loss_dict
 
 
