@@ -1,8 +1,7 @@
 # ARF: Artistic Radiance Fields
 ![](./resources/fortress_brutal.mp4)
+![](./resources/fortress_brutal.mov)
 
-<img src="./resources/fortress_milan.mp4" width="200">
-<img src="./resources/fortress_japanese.mp4" width="200px">
 
 ## Quick start
 
