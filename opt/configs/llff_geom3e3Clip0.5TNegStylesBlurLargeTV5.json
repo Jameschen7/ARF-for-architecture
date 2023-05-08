@@ -6,7 +6,7 @@
     "use_clip_loss": true,
     "clip_weight": 0.5,
     "img_tv_weight": 5,
-    "neg_style": "/mnt/storage/ARF-svox2/data/neg_styles/wood_chair_large.jpg,/mnt/storage/ARF-svox2/data/neg_styles/wood_chair_large2.jpg,/mnt/storage/ARF-svox2/data/neg_styles/wood_base.jpg",
+    "neg_style": "/mnt/storage/ARF-svox2/data/neg_styles/wood_chair_large.jpg,/mnt/storage/ARF-svox2/data/neg_styles/wood_chair_large2.jpg,/mnt/storage/ARF-svox2/data/neg_styles/wood_base.jpg,/mnt/storage/ARF-svox2/data/neg_styles/blur_wood.png,/mnt/storage/ARF-svox2/data/neg_styles/blurry_wood_corner.png",
     "lr_sh": 1e-1,
     "lr_sh_final": 1e-2,
     "thresh_type": "sigma",

@@ -96,7 +96,8 @@ def nn_feat_replace(a, b, neg_s_feats=None):
     if neg_s_feats is not None:
         n3, c, h3, w3 = neg_s_feats.size()
         neg_s_flat = neg_s_feats.view(n3, c, -1)
-        neg_s_ref = neg_s_flat.clone()
+        # neg_s_ref = neg_s_flat.clone()
+        neg_s_ref = neg_s_flat
         merged_ref = torch.cat([b_ref, neg_s_ref], dim=-1)  # [1, c, h2w2 + h3w3]
 
     z_new = []
@@ -145,17 +146,28 @@ class NNFMLoss(torch.nn.Module):
 
         self.vgg = torchvision.models.vgg16(pretrained=True).eval().to(device)
         self.normalize = torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        self.s_feats_all = None
+        self.neg_s_feats_all = None
+
         self.clip_loss = clip_loss.CLIPLoss()
-        descrip = "gothic cathedral with many spires" # "japanese traditional wooden architecture in kyoto" #
-        descrip_orig = "fortress on a wooden platform"
-        descrip_neg = [
-                # "gothic cathedral made of stone with tower",
+        ## target style description
+        # descrip = "gothic cathedral with many spires" # "japanese traditional wooden architecture in kyoto" #
+        # descrip = "japanese traditional wooden architecture"
+        descrip = "brutalism blocky building"
+
+        ## original content description
+        descrip_orig = "wooden playground over sand" # "fortress on a wooden platform"
+        
+        ## negative style description
+        ## remember to comment out the one similar to the style used
+        descrip_neg = [  
+                "gothic cathedral made of stone with tower",
                 "european church style architecture",
-                "brutalism blocky building",
+                # "brutalism blocky building",
+                # "Brutalist Architecture",
                 "Neoclassical Architecture",
                 "Art Deco Architecture",
                 "Postmodern Architecture",
-                "Brutalist Architecture",
                 "Modernist Architecture",
                 "Colonial Architecture",
                 "Tudor Architecture",
@@ -168,51 +180,14 @@ class NNFMLoss(torch.nn.Module):
                 "Streamline Moderne Architecture",
                 "Organic Architecture",
                 "renaissance architecture",
-                ]
-        
-        # descrip_neg = [
-        #         "gothic cathedral made of stone with tower",
-        #         "european church style architecture",
-        #         "Japanese shindo shrine",
-        #         "The Forbidden Palace",
-        #         "Neoclassical Architecture",
-        #         "Art Deco Architecture",
-        #         "Postmodern Architecture",
-        #         "Brutalist Architecture",
-        #         "Modernist Architecture",
-        #         "Colonial Architecture",
-        #         "Tudor Architecture",
-        #         "Greek Revival Architecture",
-        #         "Budda Temple",
-        #         "Victorian Architecture",
-        #         "Bauhaus Architecture",
-        #         "International Style Architecture",
-        #         "Prairie School Architecture",
-        #         "Beaux-Arts Architecture",
-        #         "Streamline Moderne Architecture",
-        #         "Organic Architecture"]
-        # descrip_neg = [
-        #         "Communist style building",
-        #         "downtown condos",
-        #         "Japanese shindo shrine",
-        #         "The Forbidden Palace",
-        #         "Neoclassical Architecture",
-        #         "Art Deco Architecture",
-        #         "Postmodern Architecture",
-        #         "Brutalist Architecture",
-        #         "Modernist Architecture",
-        #         "Colonial Architecture",
-        #         "Tudor Architecture",
-        #         "Greek Revival Architecture",
-        #         "Budda Temple",
-        #         "Victorian Architecture",
-        #         "Bauhaus Architecture",
-        #         "International Style Architecture",
-        #         "Prairie School Architecture",
-        #         "Beaux-Arts Architecture",
-        #         "Streamline Moderne Architecture",
-        #         "Deconstructivist Architecture",
-        #         "Organic Architecture"]
+                "Deconstructivist Architecture",
+                ## more specific ones
+                "Communist style building",
+                "American downtown condos",
+                "Japanese shindo shrine",
+                "Budda Temple",
+                "The Forbidden Palace",
+        ]
 
         self.text_inputs = torch.cat([clip.tokenize(descrip)]).to(device)
         self.text_inputs_orig = torch.cat([clip.tokenize(descrip_orig)]).to(device)
@@ -256,12 +231,25 @@ class NNFMLoss(torch.nn.Module):
 
         x_feats_all = self.get_feats(outputs, all_layers)
         with torch.no_grad():
-            s_feats_all = self.get_feats(styles, all_layers)
-            if "content_loss" in loss_names:
-                content_feats_all = self.get_feats(contents, all_layers)
+            if self.s_feats_all is None:
+                self.s_feats_all = self.get_feats(styles, all_layers)
+            s_feats_all = self.s_feats_all
             # for neg NNFM
             if neg_style_img is not None:
-                neg_s_feats_all = self.get_feats(neg_style_img, all_layers)
+                if self.neg_s_feats_all is None: 
+                    self.neg_s_feats_all = self.get_feats(neg_style_img, all_layers)
+                neg_s_feats_all = self.neg_s_feats_all
+
+            if "content_loss" in loss_names:
+                content_feats_all = self.get_feats(contents, all_layers)
+
+        # with torch.no_grad():
+        #     s_feats_all = self.get_feats(styles, all_layers)
+        #     if "content_loss" in loss_names:
+        #         content_feats_all = self.get_feats(contents, all_layers)
+        #     # for neg NNFM
+        #     if neg_style_img is not None:
+        #         neg_s_feats_all = self.get_feats(neg_style_img, all_layers)
 
         ix_map = {}
         for a, b in enumerate(all_layers):

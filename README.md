@@ -1,5 +1,11 @@
 # ARF: Artistic Radiance Fields
-![](./resources/fortress_brutal.mp4)
+<!-- ![](./resources/fortress_brutal.mp4) -->
+![img](resources/fortress.png)
+![img](resources/brutal.jpg)
+--
+<img source="resources/fortress.jpg" width="40%">
+<img source="resources/brutal.jpg" width="40%">
+--
 ![](./resources/fortress_brutal.mov)
 
 
@@ -14,6 +20,10 @@
 . ./download_data.sh
 ```
 ### Optimize artistic radiance fields
+1. Download data using the above script or prepare your own data following steps on [Plenoxel](https://github.com/sxyu/svox2).
+2. Prepare the target style image inside ```./data/styles```. Also crop background patches from training images or image generated from trained radience field and put their path as a comma separate string within the config file (e.g. ```opt/configs/llff_geom3e3Clip0.5TNegStylesTV5.json```). 
+3. Change the style image description, negative style image description, and original image description inside ```opt/nnfm_loss.py```.
+4. Execute script ```{llff/tnt/custom}.sh``` or ```{llff/tnt}_exp.sh```. E.g.
 ```bash
 cd opt && . ./try_{llff/tnt/custom}.sh [scene_name] [style_id]
 ```
@@ -23,9 +33,6 @@ cd opt && . ./try_{llff/tnt/custom}.sh [scene_name] [style_id]
 
 ### Check results
 The optimized artistic radiance field is inside ```opt/ckpt_arf/[scene_name]_[style_id]```, while the photorealistic one is inside ```opt/ckpt_svox2/[scene_name]```.
-
-### Custom data
-Please follow the steps on [Plenoxel](https://github.com/sxyu/svox2) to prepare your own custom data.
 
 ### More information
 For more information and details, we refer you to check [Plenoxel](https://github.com/sxyu/svox2) and [ARF](https://github.com/Kai-46/ARF-svox2) GitHub pages.

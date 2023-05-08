@@ -15,29 +15,29 @@ train_opt_arf()
     if [[ ! -f "${ckpt_svox2}/ckpt.npz" ]]; then
         python opt.py -t ${ckpt_svox2} ${data_dir} \
                         -c configs/llff.json
-        # python render_imgs.py ${ckpt_svox2}/ckpt.npz ${data_dir} --render_path 
+        python render_imgs.py ${ckpt_svox2}/ckpt.npz ${data_dir} --render_path 
     fi
 
-    # # python opt_style.py -t ${ckpt_arf} ${data_dir} \
-    # #                 -c configs/llff_geom.json \
-    # #                 --init_ckpt ${ckpt_svox2}/ckpt.npz \
-    # #                 --style ${style_img} \
-    # #                 --mse_num_epoches 2 --nnfm_num_epoches 10 \
-    # #                 --content_weight 1e-3 
-    # echo -e '\n--- opt_style.py'
     # python opt_style.py -t ${ckpt_arf} ${data_dir} \
-    #                 -c configs/llff_$3.json \
+    #                 -c configs/llff_geom.json \
     #                 --init_ckpt ${ckpt_svox2}/ckpt.npz \
     #                 --style ${style_img} \
     #                 --mse_num_epoches 2 --nnfm_num_epoches 10 \
     #                 --content_weight 1e-3 
+    echo -e '\n--- opt_style.py'
+    python opt_style.py -t ${ckpt_arf} ${data_dir} \
+                    -c configs/llff_$3.json \
+                    --init_ckpt ${ckpt_svox2}/ckpt.npz \
+                    --style ${style_img} \
+                    --mse_num_epoches 2 --nnfm_num_epoches 10 \
+                    --content_weight 1e-3 
 
-    # echo -e '\n--- render_imgs.py'
-    # python render_imgs.py ${ckpt_arf}/ckpt.npz ${data_dir} \
-    #                     --render_path #--no_imsave
+    echo -e '\n--- render_imgs.py'
+    python render_imgs.py ${ckpt_arf}/ckpt.npz ${data_dir} \
+                        --render_path #--no_imsave
 }
 
-
+## experiements
 # train_opt_arf fortress milan2 geom3e2
 # train_opt_arf fortress milan2 geom1e2Clip0.1
 # train_opt_arf fortress milan2 geom1e2Clip0.01
@@ -46,5 +46,11 @@ train_opt_arf()
 # train_opt_arf fortress milan2 geom1e2Clip1TNegStyles
 # train_opt_arf fortress milan2 geom1e2Clip1TNegStyles
 # train_opt_arf fortress milan2 geom1e3Clip1TNegStylesTV1
-train_opt_arf fortress milan2 geom3e3Clip0.5TNegStylesTV5
+# train_opt_arf fortress milan2 geom3e3Clip0.5TNegStylesTV5
 # train_opt_arf fortress milan2 geom3e4Clip0.5TNegStylesTV5Long
+
+
+# train_opt_arf fortress milan2 geom3e3Clip0.5TNegStylesTV7
+# train_opt_arf fortress milan2 geom3e3Clip0.5TNegStylesTV4
+# train_opt_arf fortress milan2 geom3e3Clip0.5TNegStylesLargeBlurTV5
+train_opt_arf fortress milan2 geom3e3Clip0.5TNegStylesLargeTV5

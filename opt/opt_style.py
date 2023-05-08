@@ -543,11 +543,14 @@ style_img = torch.from_numpy(style_img).to(device=device)
 ic("Style image: ", args.style, style_img.shape)
 
 # neg_style_imgs = []
+style_short_side = min([style_img.shape[0], style_img.shape[1]])
 neg_style_img_candidates = []
 if args.neg_style:
     neg_styles = args.neg_style.split(",")
     for i, neg_style_path in enumerate(neg_styles):
-        neg_style_img = load_and_save_style_img(neg_style_path, f"neg_style_{i}")
+        neg_style_img = load_and_save_style_img(neg_style_path, f"neg_style_{i}")[:,:,:3]
+        # neg_style_img = cv2.resize(neg_style_img, (style_short_side, style_short_side),  # reduce size by half again
+        #                 interpolation=cv2.INTER_LANCZOS4)
         neg_style_img = cv2.resize(neg_style_img, (content_long_side // 4, content_long_side // 4),  # reduce size by half again
                         interpolation=cv2.INTER_LANCZOS4)
         
@@ -555,6 +558,7 @@ if args.neg_style:
         for neg_style_img_base in [neg_style_img, neg_style_img[::-1]]:
             for num_rot in range(3):
                 neg_style_img_candidates.append(np.rot90(neg_style_img_base, k=num_rot, axes=(0,1)))
+                # print("neg_style_img_candidates shape: ", neg_style_img_candidates[-1].shape)
 neg_style_img = np.concatenate(neg_style_img_candidates, axis=0) # concat along height dim
 neg_style_img = torch.from_numpy(neg_style_img).to(device=device)
 ic("neg_style image: ", neg_styles, neg_style_img.shape)
