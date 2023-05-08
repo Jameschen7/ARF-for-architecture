@@ -1,11 +1,6 @@
 # ARF: Artistic Radiance Fields
-<!-- ![](./resources/fortress_brutal.mp4) -->
-![img](resources/fortress.png)
-![img](resources/brutal.jpg)
---
-<img source="resources/fortress.jpg" width="40%">
-<img source="resources/brutal.jpg" width="40%">
---
+Additional video results are available at: <http://www.contrib.andrew.cmu.edu/~qiyuc/16824-final-project/project_website/>
+
 ![](./resources/fortress_brutal.mov)
 
 
